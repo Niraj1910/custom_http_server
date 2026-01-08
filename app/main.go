@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net"
@@ -49,55 +51,106 @@ func main() {
 	}
 }
 
+var statusTexts = map[int]string{
+	200: "HTTP/1.1 200 OK",
+	201: "HTTP/1.1 201 Created",
+	400: "HTTP/1.1 400 Bad Request",
+	404: "HTTP/1.1 404 Not Found",
+	405: "HTTP/1.1 405 Method Not Allowed",
+	500: "HTTP/1.1 500 Internal Server Error",
+}
+
+func BuildResponse(statusCode int, contentType string, bodyBytes []byte, acceptGzip bool) string {
+	statusLine, ok := statusTexts[statusCode]
+	if !ok {
+		statusLine = "HTTP/1.1 500 Internal Server Error" // fallback
+	}
+	var headers []string
+	headers = append(headers, statusLine)
+
+	if contentType != "" {
+		headers = append(headers, "Content-Type: "+contentType)
+	}
+
+	finalBody := bodyBytes
+	if acceptGzip {
+		compressed, err := CompressBody(string(bodyBytes))
+		if err == nil {
+			finalBody = compressed
+			headers = append(headers, "Content-Encoding: gzip")
+		}
+	}
+	headers = append(headers, fmt.Sprintf("Content-Length: %d", len(finalBody)))
+	headers = append(headers, "")
+	headerStr := strings.Join(headers, "\r\n")
+	return headerStr + "\r\n" + string(finalBody)
+}
+
+func CompressBody(body string) ([]byte, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write([]byte(body)); err != nil {
+		fmt.Println("failed to compress into gzip: ", err)
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		fmt.Println("failed to Close() after compressing into gzip: ", err)
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func ServeHTTP(conn net.Conn, parser pkg.Parser, directory string) {
 	var response string
 	target := parser.RequestLine.Target
 	method := parser.RequestLine.Method
+	acceptGzip := strings.Contains(parser.Headers.Values["Accept-Encoding"], "gzip")
 
 	switch {
 	case target == "/":
-		response = "HTTP/1.1 200 OK\r\n\r\n"
+		response = BuildResponse(200, "", nil, acceptGzip)
+
 	case strings.HasPrefix(target, "/echo/"):
 		echoStr := strings.TrimPrefix(target, "/echo/")
 		decode, _ := url.PathUnescape(echoStr)
-		response = fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(decode), decode)
+		response = BuildResponse(200, "text/plain", []byte(decode), acceptGzip)
 
 	case target == "/user-agent":
 		ua := parser.Headers.Values["User-Agent"]
 		if ua == "" {
 			ua = "unknown"
 		}
-		response = fmt.Sprintf(
-			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
-			len(ua), ua,
-		)
-	case strings.HasPrefix(target, "/files/"):
-		fileName := strings.TrimPrefix(target, "/files/")
-		fullPath := filepath.Join(directory, fileName)
+		response = BuildResponse(200, "text/plain", []byte(ua), acceptGzip)
 
-		if method == "GET" {
-			data, err := os.ReadFile(fullPath)
-			if err != nil {
-				response = "HTTP/1.1 404 Not Found\r\n\r\n"
-			} else {
-				response = fmt.Sprintf(
-					"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n%s",
-					len(data), string(data),
-				)
-			}
-		} else if method == "POST" {
-			err := os.WriteFile(fullPath, parser.Body.Raw, 06444)
-			if err != nil {
-				fmt.Printf("Failed to write file %s: %v\n", fullPath, err)
-				response = "HTTP/1.1 500 Internal Server Error\r\n\r\n"
-			} else {
-				response = "HTTP/1.1 201 Created\r\n\r\n"
-			}
+	case strings.HasPrefix(target, "/files/"):
+
+		if directory == "" {
+			response = BuildResponse(500, "text/plain", []byte("File directory not configured"), acceptGzip)
 		} else {
-			response = "HTTP/1.1 405 Method Not Allowed\r\n\r\n"
+			fileName := strings.TrimPrefix(target, "/files/")
+			fullPath := filepath.Join(directory, fileName)
+
+			if method == "GET" {
+				data, err := os.ReadFile(fullPath)
+				if err != nil {
+					response = BuildResponse(404, "", nil, acceptGzip)
+				} else {
+					response = BuildResponse(200, "application/octet-stream", data, acceptGzip)
+				}
+			} else if method == "POST" {
+				err := os.WriteFile(fullPath, parser.Body.Raw, 06444)
+				if err != nil {
+					fmt.Printf("Failed to write file %s: %v\n", fullPath, err)
+					response = BuildResponse(500, "", nil, acceptGzip)
+				} else {
+					response = BuildResponse(201, "", parser.Body.Raw, acceptGzip)
+				}
+			} else {
+				response = BuildResponse(405, "", nil, acceptGzip)
+			}
 		}
 	default:
-		response = "HTTP/1.1 404 Not Found\r\n\r\n"
+		response = BuildResponse(404, "", nil, acceptGzip)
 	}
 	conn.Write([]byte(response))
 }
