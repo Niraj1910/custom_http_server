@@ -61,3 +61,27 @@ go run app/main.go
 
 # With file serving enabled
 go run app/main.go /tmp/myfiles
+```
+
+## Examples
+```bash
+# Root
+curl http://localhost:4221/
+
+# Echo
+curl http://localhost:4221/echo/hello-world
+
+# With URL encoding
+curl http://localhost:4221/echo/hello%20world
+
+# User-Agent
+curl http://localhost:4221/user-agent
+
+# File upload (POST)
+curl -X POST http://localhost:4221/files/greeting.txt -d "Hello from Go!"
+
+# File download (GET)
+curl http://localhost:4221/files/greeting.txt
+
+# Compression test (raw output to see gzipped bytes)
+curl -H "Accept-Encoding: gzip" --raw -o - http://localhost:4221/echo/long-text-here
