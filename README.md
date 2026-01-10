@@ -75,7 +75,7 @@ curl http://localhost:4221/echo/hello-world
 curl http://localhost:4221/echo/hello%20world
 
 # User-Agent
-curl http://localhost:4221/user-agent
+curl -H "User-Agent: foo" http://localhost:4221/user-agent
 
 # File upload (POST)
 curl -X POST http://localhost:4221/files/greeting.txt -d "Hello from Go!"
