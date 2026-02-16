@@ -52,6 +52,10 @@ This project goes deeper — implementing the HTTP protocol directly over TCP to
 It's inspired by challenges like [CodeCrafters HTTP Server](https://codecrafters.io) and real-world systems programming.
 
 ## Usage
+```bash
+docker pull niraj1910/go-http1.1-server:v1.0
+docker run -p 4221:4221 niraj1910/go-http1.1-server:v1.0
+```
 
 ### Run the Server
 
